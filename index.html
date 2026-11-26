@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Disappearances communications</title>
+<style>
+:root{--paper:#F4F6F7;--surface:#FFFFFF;--ink:#17212B;--ink-2:#4A5866;--rule:#D3DAE0;--rule-strong:#9AA6B2;--accent:#0F5E8C;--flag:#A8410B;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--paper:#10171E;--surface:#18222C;--ink:#E4EAF0;--ink-2:#A7B3BF;--rule:#2A3742;--rule-strong:#4A5866;--accent:#74B9E6;--flag:#F0A070;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;background:var(--paper);color:var(--ink);font:15px/1.45 "Avenir Next","Segoe UI Variable Text","Segoe UI",system-ui,"Helvetica Neue",Arial,sans-serif;padding:16px}
+.card{width:min(400px,100%);background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:28px 28px 24px;box-shadow:0 6px 24px rgba(23,33,43,.10)}
+h1{font-size:1.25rem;margin:0 0 4px}
+p{margin:0 0 18px;color:var(--ink-2);font-size:.875rem}
+label{display:block;font-size:.78rem;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-2);margin-bottom:6px}
+input{width:100%;padding:10px 12px;font:inherit;border:1px solid var(--rule-strong);border-radius:4px;background:var(--surface);color:var(--ink)}
+input:focus{outline:2px solid var(--accent);outline-offset:1px}
+button{margin-top:14px;width:100%;padding:10px;font:600 15px/1.2 inherit;font-family:inherit;border:0;border-radius:4px;background:var(--accent);color:var(--surface);cursor:pointer}
+button:disabled{opacity:.6;cursor:default}
+.msg{min-height:1.3em;margin-top:12px;font-size:.85rem;color:var(--ink-2)}
+.msg.err{color:var(--flag)}
+progress{width:100%;height:6px;margin-top:12px;accent-color:var(--accent)}
+.keep{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:.85rem;color:var(--ink-2);text-transform:none;letter-spacing:0;font-weight:400}
+.keep input{width:auto}
+</style>
+</head>
+<body>
+<form class="card" id="f" autocomplete="off">
+  <h1>Disappearances communications</h1>
+  <p>This explorer is encrypted. Enter the password you were given.</p>
+  <label for="pw">Password</label>
+  <input id="pw" type="password" autocomplete="current-password" required autofocus>
+  <label class="keep"><input id="keep" type="checkbox"> Stay unlocked in this tab</label>
+  <button id="go" type="submit">Unlock</button>
+  <progress id="pr" max="1" value="0" hidden></progress>
+  <div class="msg" id="msg" role="status" aria-live="polite"></div>
+</form>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const msg = (t, err) => { $('msg').textContent = t; $('msg').className = 'msg' + (err ? ' err' : ''); };
+  const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  const SKEY = 'unwgd-key';
+  if (!window.crypto || !crypto.subtle || !window.DecompressionStream) { msg('This browser cannot open the explorer. Use a current Chrome, Edge, Firefox or Safari.', true); $('go').disabled = true; return; }
+  let payload = null;
+  async function download(man) {
+    if (payload) return payload;
+    const buf = new Uint8Array(man.bytes); let off = 0;
+    $('pr').hidden = false;
+    for (const part of man.parts) {
+      const r = await fetch(part, { cache: 'no-cache' });
+      if (!r.ok) throw new Error('download failed (' + r.status + ')');
+      const rd = r.body.getReader();
+      for (;;) { const { done, value } = await rd.read(); if (done) break; buf.set(value, off); off += value.length; $('pr').value = off / man.bytes; msg('Downloading… ' + Math.round(100 * off / man.bytes) + '%'); }
+    }
+    if (off !== man.bytes) throw new Error('incomplete download');
+    return (payload = buf);
+  }
+  async function open(key, man, onOk) {
+    const ct = await download(man);
+    msg('Decrypting…');
+    let gz;
+    try { gz = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(man.iv) }, key, ct); }
+    catch { const e = new Error('Wrong password.'); e.bad = true; throw e; }
+    if (onOk) onOk();
+    msg('Opening…');
+    const html = await new Response(new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
+    document.open(); document.write(html); document.close();
+  }
+  async function manifest() { const r = await fetch('data/manifest.json', { cache: 'no-cache' }); if (!r.ok) throw new Error('manifest missing'); return r.json(); }
+  // Reopen without a prompt when this tab was unlocked before (key kept in sessionStorage only).
+  (async () => {
+    let raw = null; try { raw = sessionStorage.getItem(SKEY); } catch {}
+    if (!raw) return;
+    try { const man = await manifest(); const key = await crypto.subtle.importKey('raw', unb64(raw), 'AES-GCM', false, ['decrypt']); $('go').disabled = true; await open(key, man); }
+    catch { try { sessionStorage.removeItem(SKEY); } catch {} $('go').disabled = false; msg(''); }
+  })();
+  $('f').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('go').disabled = true; msg('Checking…');
+    try {
+      const man = await manifest();
+      const base = await crypto.subtle.importKey('raw', new TextEncoder().encode($('pw').value), 'PBKDF2', false, ['deriveKey']);
+      const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: unb64(man.salt), iterations: man.iter }, base, { name: 'AES-GCM', length: 256 }, true, ['decrypt']);
+      const keep = $('keep').checked;
+      const rawKey = keep ? new Uint8Array(await crypto.subtle.exportKey('raw', key)) : null;
+      await open(key, man, () => { if (rawKey) try { sessionStorage.setItem(SKEY, btoa(String.fromCharCode(...rawKey))); } catch {} });
+    } catch (err) {
+      msg(err.bad ? 'Wrong password. Try again.' : 'Could not open the explorer: ' + err.message, true);
+      $('pr').hidden = true; $('go').disabled = false; $('pw').select();
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+ "v": 1,
+ "kdf": "PBKDF2-SHA256",
+ "iter": 600000,
+ "salt": "6XobUua1hl8Z9kXPROgzug==",
+ "iv": "G2SSSEKVHSup/1Tc",
+ "bytes": 62052500,
+ "parts": [
+  "data/payload.0.bin",
+  "data/payload.1.bin"
+ ],
+ "built": "2026-11-26T07:24:55.096Z"
+}
